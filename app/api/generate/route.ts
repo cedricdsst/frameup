@@ -81,7 +81,12 @@ export async function POST(request: Request) {
         ? "Cette demande a été bloquée par les règles de sécurité. Reformulez le prompt."
         : result?.error?.message ?? "La génération OpenAI a échoué.";
       console.error("OpenAI image error", openAIResponse.status, result?.error?.code, result?.error?.request_id);
-      return NextResponse.json({ error: message }, { status: openAIResponse.status });
+      const headers = new Headers();
+      const retryAfter = openAIResponse.headers.get("retry-after");
+      const retryAfterMs = openAIResponse.headers.get("retry-after-ms");
+      if (retryAfter) headers.set("retry-after", retryAfter);
+      if (retryAfterMs) headers.set("retry-after-ms", retryAfterMs);
+      return NextResponse.json({ error: message }, { status: openAIResponse.status, headers });
     }
 
     const base64 = result?.data?.[0]?.b64_json;
