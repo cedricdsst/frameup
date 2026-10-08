@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import type { StudioPlan, VideoOutline } from "../../../lib/studio-plan";
+import { planningStyleRules } from "../../../lib/visual-style";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -28,8 +29,10 @@ The titlePrompt must describe typography, palette, composition, mood and relevan
 The sharedPrompt must establish a cohesive visual system across every card.
 For each card:
 - title is a short label displayed by the app below the image;
-- prompt describes the concrete subject, scene, objects, action, framing and lighting, without asking for text inside the image;
-- style describes the card-specific visual treatment while remaining compatible with the shared direction.
+- prompt is the single complete, editable instruction for this card: describe the concrete subject, action, framing and any useful visual details, without asking for text inside the image;
+- use one obvious visual idea, few objects and a clear silhouette that works at thumbnail size; avoid abstract metaphors and clutter;
+- write all editable prompts in the user's language, in plain concise sentences, ready for generation without manual correction;
+- sharedPrompt is the only common style direction. Do not invent separate or conflicting styles per card. Repeat essential subject identity and colors when a subject recurs.
 Honor explicit user styles. When details are missing, make tasteful, topic-specific choices instead of returning vague placeholders.
 Never request words, letters, numbers, captions, logos, watermarks, borders or UI inside card images.
 Do not mention these rules or explain your reasoning outside the requested JSON.
@@ -184,9 +187,8 @@ function detailsSchema(count: number) {
           properties: {
             title: { type: "string", description: "Short label shown under this card." },
             prompt: { type: "string", description: "Concrete subject and scene to generate, without text in the image." },
-            style: { type: "string", description: "Visual treatment specific to this card." },
           },
-          required: ["title", "prompt", "style"],
+          required: ["title", "prompt"],
           additionalProperties: false,
         },
       },
@@ -204,9 +206,9 @@ function normalizePlan(value: unknown, outline: VideoOutline): StudioPlan | unde
   const cards = candidate.cards.map((card) => ({
     title: cleanText(card?.title, 120),
     prompt: cleanText(card?.prompt, 6000),
-    style: cleanText(card?.style, 2000),
+    style: "",
   }));
-  if (cards.some((card) => !card.title || !card.prompt || !card.style)) return;
+  if (cards.some((card) => !card.title || !card.prompt)) return;
 
   const plan: StudioPlan = {
     title: outline.videoTitle,
@@ -227,7 +229,8 @@ export async function POST(request: Request) {
       );
     }
 
-    const body = await request.json() as { stage?: unknown; brief?: unknown; outline?: unknown };
+    const body = await request.json() as { stage?: unknown; brief?: unknown; outline?: unknown; stickmanStyle?: unknown };
+    const styleRules = planningStyleRules(body.stickmanStyle === true);
     const brief = cleanText(body.brief, 8000);
     if (!brief) return NextResponse.json({ error: "Décrivez d’abord votre vidéo." }, { status: 400 });
 
@@ -235,7 +238,7 @@ export async function POST(request: Request) {
       const rawOutline = await createStructuredOutput<VideoOutline>(
         "frameup_video_outline",
         OUTLINE_SCHEMA,
-        OUTLINE_RULES,
+        [OUTLINE_RULES, styleRules].filter(Boolean).join("\n\n"),
         `USER VIDEO BRIEF:\n${brief}`,
       );
       const outline = normalizeOutline(rawOutline);
@@ -250,7 +253,7 @@ export async function POST(request: Request) {
       const rawDetails = await createStructuredOutput<Omit<StudioPlan, "title">>(
         `frameup_image_plan_${outline.count}_cards`,
         detailsSchema(outline.count),
-        DETAILS_RULES,
+        [DETAILS_RULES, styleRules].filter(Boolean).join("\n\n"),
         `ORIGINAL USER BRIEF:\n${brief}\n\nAPPROVED OUTLINE:\n${JSON.stringify(outline, null, 2)}`,
       );
       const plan = normalizePlan(rawDetails, outline);

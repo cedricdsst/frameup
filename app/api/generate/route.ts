@@ -1,4 +1,6 @@
 import { NextResponse } from "next/server";
+import { getProject, storeGeneratedImage } from "../../../lib/project-store";
+import { STICKMAN_STYLE } from "../../../lib/visual-style";
 
 export const runtime = "nodejs";
 export const maxDuration = 180;
@@ -27,7 +29,11 @@ type Payload = {
   prompt?: string;
   title?: string;
   style?: string;
+  sharedPrompt?: string;
+  stickmanStyle?: boolean;
   quality?: "low" | "medium" | "high";
+  projectId?: string;
+  imageKey?: string;
 };
 
 export async function POST(request: Request) {
@@ -40,10 +46,24 @@ export async function POST(request: Request) {
     }
 
     const body = (await request.json()) as Payload;
+    if (typeof body.projectId !== "string" || typeof body.imageKey !== "string") {
+      return NextResponse.json({ error: "Le projet de destination est manquant." }, { status: 400 });
+    }
+    let project;
+    try {
+      project = await getProject(body.projectId);
+    } catch {
+      return NextResponse.json({ error: "Projet introuvable." }, { status: 404 });
+    }
     const kind = body.kind === "title" ? "title" : "card";
-    const title = body.title?.trim().slice(0, 180) ?? "";
-    const prompt = body.prompt?.trim().slice(0, 6000) ?? "";
-    const style = body.style?.trim().slice(0, 1000) ?? "";
+    if (kind === "title" ? body.imageKey !== "title" : !project.cards.some((card) => body.imageKey === `card-${card.id}`)) {
+      return NextResponse.json({ error: "Emplacement d’image invalide." }, { status: 400 });
+    }
+    const title = typeof body.title === "string" ? body.title.trim().slice(0, 180) : "";
+    const prompt = typeof body.prompt === "string" ? body.prompt.trim().slice(0, 10000) : "";
+    const style = typeof body.style === "string" ? body.style.trim().slice(0, 5000) : "";
+    const sharedPrompt = typeof body.sharedPrompt === "string" ? body.sharedPrompt.trim().slice(0, 3000) : "";
+    const stickmanStyle = typeof body.stickmanStyle === "boolean" ? body.stickmanStyle : project.stickmanStyle === true;
 
     if (!prompt && !title) {
       return NextResponse.json({ error: "Ajoutez au moins un titre ou une description." }, { status: 400 });
@@ -53,8 +73,11 @@ export async function POST(request: Request) {
     const composedPrompt = [
       hiddenRules,
       kind === "title" ? `EXACT TITLE TO DISPLAY: « ${title} »` : `SUBJECT LABEL (context only, do not write it): ${title}`,
-      style && `SHARED ART DIRECTION: ${style}`,
+      kind === "card" && sharedPrompt && `SHARED ART DIRECTION: ${sharedPrompt}`,
+      style && `ADDITIONAL ART DIRECTION: ${style}`,
       prompt && `USER REQUEST: ${prompt}`,
+      stickmanStyle && `MANDATORY STYLE OVERRIDE: The following preset replaces any conflicting polished, premium, 3D or lighting instructions above. Preserve the requested subject and exact title.\n${STICKMAN_STYLE}`,
+      stickmanStyle && kind === "title" && "Draw the exact title with large simple wobbly hand-drawn lettering and flat colors. Keep every letter readable and correctly spelled.",
       "FINAL TECHNICAL CONSTRAINT: Return a real transparent alpha background. Never represent transparency with a checkerboard or grid.",
     ].filter(Boolean).join("\n\n");
 
@@ -91,7 +114,8 @@ export async function POST(request: Request) {
 
     const base64 = result?.data?.[0]?.b64_json;
     if (!base64) return NextResponse.json({ error: "Aucune image reçue." }, { status: 502 });
-    return NextResponse.json({ image: `data:image/png;base64,${base64}` });
+    const image = await storeGeneratedImage(body.projectId, body.imageKey, base64);
+    return NextResponse.json({ image });
   } catch (error) {
     console.error("Image generation route error", error);
     return NextResponse.json({ error: "Erreur interne pendant la génération." }, { status: 500 });

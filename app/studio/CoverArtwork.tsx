@@ -512,7 +512,7 @@ function InlineSubjectEditor({
         <textarea
           ref={textareaRef}
           rows={1}
-          maxLength={140}
+          maxLength={120}
           aria-label="Modifier le texte du sujet"
           value={value}
           onChange={(event) => onChange(event.target.value)}
@@ -763,6 +763,7 @@ export const CoverArtwork = forwardRef<SVGSVGElement, CoverArtworkProps>(functio
       })}
 
       <text
+        data-editor-only="true"
         x={WIDTH / 2}
         y="1870"
         fill={foreground}

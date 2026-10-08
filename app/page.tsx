@@ -8,7 +8,7 @@ import {
   type VideoOutline,
 } from "../lib/studio-plan";
 
-type Phase = "idle" | "outline" | "details";
+type Phase = "idle" | "outline" | "details" | "saving";
 
 const EXAMPLES = [
   "5 erreurs qui empêchent de progresser en course à pied",
@@ -34,6 +34,7 @@ async function postPlan<T>(payload: object): Promise<T> {
 export default function BriefPage() {
   const router = useRouter();
   const [brief, setBrief] = useState("");
+  const [stickmanStyle, setStickmanStyle] = useState(false);
   const [phase, setPhase] = useState<Phase>("idle");
   const [outline, setOutline] = useState<VideoOutline>();
   const [error, setError] = useState<string>();
@@ -49,7 +50,7 @@ export default function BriefPage() {
     setPhase("outline");
 
     try {
-      const firstStep = await postPlan<{ outline: VideoOutline }>({ stage: "outline", brief: cleanBrief });
+      const firstStep = await postPlan<{ outline: VideoOutline }>({ stage: "outline", brief: cleanBrief, stickmanStyle });
       setOutline(firstStep.outline);
       setPhase("details");
 
@@ -57,10 +58,19 @@ export default function BriefPage() {
         stage: "details",
         brief: cleanBrief,
         outline: firstStep.outline,
+        stickmanStyle,
       });
 
-      sessionStorage.setItem(STUDIO_PLAN_STORAGE_KEY, JSON.stringify(secondStep.plan));
-      router.push("/studio");
+      setPhase("saving");
+      const created = await fetch("/api/projects", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ brief: cleanBrief, plan: secondStep.plan, stickmanStyle }),
+      });
+      const createdData = await created.json();
+      if (!created.ok) throw new Error(createdData.error ?? "La création du projet a échoué.");
+      sessionStorage.removeItem(STUDIO_PLAN_STORAGE_KEY);
+      router.push(`/studio/${createdData.project.id}`);
     } catch (caughtError) {
       setError(caughtError instanceof Error ? caughtError.message : "Erreur inconnue.");
       setPhase("idle");
@@ -78,14 +88,14 @@ export default function BriefPage() {
     <main className="brief-page">
       <header className="topbar brief-topbar">
         <a className="brand" href="/"><span>F</span> FRAMEUP</a>
-        <a className="studio-link" href="/studio">Ouvrir le studio vide <span>→</span></a>
+        <a className="studio-link" href="/projects">Mes projets <span>→</span></a>
       </header>
 
       <section className="brief-shell">
         <div className="brief-heading">
           <span className="eyebrow"><SparkIcon /> AI CREATIVE BRIEF</span>
           <h1>Transformez vos idées<br />en <em>scroll-stoppers.</em></h1>
-          <p>Donnez le sujet, le titre envisagé, les parties importantes et vos envies de style. FrameUp transforme votre idée en direction créative prête à générer.</p>
+          <p>Décrivez votre vidéo. FrameUp prépare le titre et les images ; vous pourrez tout ajuster dans le studio.</p>
         </div>
 
         <form className="brief-composer" onSubmit={createPlan}>
@@ -100,6 +110,10 @@ export default function BriefPage() {
             maxLength={8000}
             disabled={loading}
           />
+          <label className="style-toggle brief-style-toggle">
+            <input type="checkbox" checked={stickmanStyle} onChange={(event) => setStickmanStyle(event.target.checked)} disabled={loading} />
+            <span><strong>Style stickman</strong><small>Dessin Paint maladroit, contours tremblants et couleurs plates. Les sujets restent ceux de votre vidéo.</small></span>
+          </label>
           <div className="composer-footer">
             <span><kbd>Entrée</kbd> pour créer · <kbd>Maj Entrée</kbd> pour une nouvelle ligne</span>
             <button type="submit" aria-label="Créer le plan de la cover" disabled={!brief.trim() || loading}>
@@ -115,9 +129,9 @@ export default function BriefPage() {
               <span><strong>Structure éditoriale</strong><small>{outline ? `${outline.count} parties · ${outline.videoTitle}` : "Choix du titre et du nombre de parties…"}</small></span>
             </div>
             <i />
-            <div className={phase === "details" ? "active" : "pending"}>
-              <b>{phase === "details" ? <span className="composer-spinner" /> : "2"}</b>
-              <span><strong>Direction des images</strong><small>Prompts du titre et de chaque partie</small></span>
+            <div className={phase === "details" || phase === "saving" ? "active" : "pending"}>
+              <b>{phase === "details" || phase === "saving" ? <span className="composer-spinner" /> : "2"}</b>
+              <span><strong>{phase === "saving" ? "Enregistrement du projet" : "Direction des images"}</strong><small>{phase === "saving" ? "Création de son espace de travail…" : "Prompts du titre et de chaque partie"}</small></span>
             </div>
           </div>
         ) : (
